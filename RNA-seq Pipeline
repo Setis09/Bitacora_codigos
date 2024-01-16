@@ -1,0 +1,61 @@
+RNA-seq Differential Expression Analysis Pipeline
+
+RESUMEN DE LOS PASOS
+
+1. Control de calidad y trimming de las secuencias Fastq crudas.
+2. Mapeo o pseudo-mapeo a la referencia y anotaciones. * Requiere referencia y anotaciones
+2.1. Ensamblaje de transcriptoma *El ensamblaje no es necesario.
+3. Cuantificacion de transcritos.
+4. Analisis de expresion difrencial (DEG)
+5. Analisis funcional (GO, KEGG ...etc)
+
+========================================================================================================================================
+DESCRIPCION DE LOS PASOS
+
+Se recomienda tener 4 carpetas:
+  1.data # Directorio los datos Fastq crudos y trimmed
+  2.referencia # Directorio con la referencia, la referencia indexada (en una carpeta aparte), anotaciones
+
+#  1. Control de calidad y trimming de las secuencias Fastq crudas.
+
+* Requerimientos: Software de control de calidad (FastQC), Trimmer (Trimmomatic), lecturas Fastq
+
+FastQC y FASTX para analizar la calidad de las secuencias.
+El puntaje minimo recomendado es q-score > 30
+
+Trimmomatic y Skewer para generar el corte y eliminacion de secuencias con un q-score debajo del threshold
+
+---------------------------------------------------------------------------------------------------------------------------------------
+#  2. Mapeo o pseudo-mapeo a referencia y anotaciones.
+
+* Requerimientos: Genoma/transcriptoma de referencia (fasta), Anotaciones (GFF3 o GTF), Alineador (HISAT2) o pseudo-mapeador (Salmon)
+
+La referencia suele estar en formato Fasta y puede ser obtenia de NCBI y Ensembl. Dicha referencia puede ser:
+    - Genoma de referencia.
+    - Transcriptoma de referencia.
+
+Las anotaciones de la referencia pueden estar en formato GTF o GFF3. Es preferible un formato GTF* para evitar conflictos de formato
+con programas posteriores. La anotacion viene adicional al genoma de referencia. Entre mas estudiado este el organismo que se esta 
+analizando, es mas facil encontrar una buena anotacion. Esto es importante, puesto que una buena anotacion puede facilitar el analisis
+funcional despues del DEG.
+
+El proceso de mapeo se hace por alineamiento cuando se emplean programas como HISAT2, Bowtie2, BWA, STAR. Hay un pseudo-mapeo que se
+realiza cuando se usan programas como Salmon o Kallisto.
+
+** ALINEANDO LOS FASTQ USANDO HISAT2
+
+Primero se debe hacer el index del genoma/transcriptoma de referencia. En este caso se usa HISAT2:
+    hisat2-build ref_genome.fa genome_index
+
+Ahora si se procede al alineamiento:
+hisat2 --dta \
+-x path/to/genome_index \ # Genoma de referencia indexado. La carpeta tiene multiples archivos, pero solo hay que poner ese sufijo
+-1 path/to/R1.fastq.gz \ # Left seq
+-2 path/to/R2.fastq.gz \ # Right seq
+-S path/to/output.sam \ # Nombre del output en formato sam
+-p 20 \ # Numero de nucleos empleados
+> Align_rate.txt 2>&1 # El standard output se redirige a ese archivo. Ahi hay estadisticas del alineamiento
+
+** PASANDO DE SAM a SORTED.BAM
+samtools sort "output.sam" - o 
+---------------------------------------------------------------------------------------------------------------------------------------
