@@ -135,7 +135,7 @@ El "merge_list.txt" debe contener el path a cada uno de los transcriptomas gener
 
 ---------------------------------------------------------------------------------------------------------------------------------------
 
-	# 3. Cuantificacion de transcritos
+	#	3. Cuantificacion de transcritos
 
 	** Cuantificando usando Stringtie
 	
