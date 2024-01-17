@@ -4,7 +4,8 @@ RESUMEN DE LOS PASOS
 
 1. Control de calidad y trimming de las secuencias Fastq crudas.
 2. Mapeo o pseudo-mapeo a la referencia y anotaciones. * Requiere referencia y anotaciones
-2.1. Ensamblaje de transcriptoma *El ensamblaje no es necesario.
+2.1 Creacion de las anotaciones con las coordenadas de los IGRs
+2.2. Ensamblaje de transcriptoma con Stringtie. *El ensamblaje no siempre es necesario
 3. Cuantificacion de transcritos.
 4. Analisis de expresion difrencial (DEG)
 5. Analisis funcional (GO, KEGG ...etc)
@@ -14,9 +15,11 @@ DESCRIPCION DE LOS PASOS
 
 Se recomienda tener 4 carpetas:
   1.data # Directorio los datos Fastq crudos y trimmed
-  2.referencia # Directorio con la referencia, la referencia indexada (en una carpeta aparte), anotaciones
+  2.referencia # Directorio con la referencia, la referencia indexada (en una carpeta aparte), anotaciones (IGRs y genes)
+  3.alineamientos # Directorio son las salidas de los alineamientos en formato SAM y SORTED.BAM
+  4.ensamblajes # Directorio con los ensamblajes en GTF y los files con los resultados de la cuantificacion.
 
-#  1. Control de calidad y trimming de las secuencias Fastq crudas.
+	#	1.Control de calidad y trimming de las secuencias Fastq crudas.
 
 * Requerimientos: Software de control de calidad (FastQC), Trimmer (Trimmomatic), lecturas Fastq
 
@@ -26,7 +29,7 @@ El puntaje minimo recomendado es q-score > 30
 Trimmomatic y Skewer para generar el corte y eliminacion de secuencias con un q-score debajo del threshold
 
 ---------------------------------------------------------------------------------------------------------------------------------------
-#  2. Mapeo o pseudo-mapeo a referencia y anotaciones.
+	#	2.Mapeo o pseudo-mapeo a referencia y anotaciones.
 
 * Requerimientos: Genoma/transcriptoma de referencia (fasta), Anotaciones (GFF3 o GTF), Alineador (HISAT2) o pseudo-mapeador (Salmon)
 
@@ -50,12 +53,100 @@ Primero se debe hacer el index del genoma/transcriptoma de referencia. En este c
 Ahora si se procede al alineamiento:
 hisat2 --dta \
 -x path/to/genome_index \ # Genoma de referencia indexado. La carpeta tiene multiples archivos, pero solo hay que poner ese sufijo
--1 path/to/R1.fastq.gz \ # Left seq
--2 path/to/R2.fastq.gz \ # Right seq
--S path/to/output.sam \ # Nombre del output en formato sam
+-1 path/to/R1_query1.fastq.gz \ # Left seq
+-2 path/to/R2_query1.fastq.gz \ # Right seq
+-S path/to/query_rna1.sam \ # Nombre del output en formato sam
 -p 20 \ # Numero de nucleos empleados
 > Align_rate.txt 2>&1 # El standard output se redirige a ese archivo. Ahi hay estadisticas del alineamiento
 
 ** PASANDO DE SAM a SORTED.BAM
-samtools sort "output.sam" - o 
+samtools sort 3.alineamientos/output.sam - o 3.alineamientos/output.sorted.bam -@ 20
+rm 3.alineamientos/output.sam # Es mejor borrar el archivo sam
+
+	* Si se esta haciendo alineamientos con genoma bacteriano, no se espera un splicing alternativo. Entonces se recomienda usar el
+	paramentro:
+	--max-intronlen 50
+
 ---------------------------------------------------------------------------------------------------------------------------------------
+
+	#	2.1 Creacion de las anotaciones con las coordenadas de los IGRs ** Si se va a hacer el RNA-seq considerando IGRs
+
+	* Requisitos: BEDTOOLS, Genoma/transcriptoma de referencia (fasta)
+
+Todo esto esta en el directorio 2.referencia
+Para hacer la cuantificacion de los transcritos que se generaron para las regiones intergenicas (IGRs), es decir RNAs no codificantes,
+se procede a buscar en el archivo de anotacion, los segmentos en donde no hay transcritos descritos. A partir de estos "gaps" se genera
+un archivo que contiene dichas coordenadas con estos sementos. Este es el archivo de anotacion de los IGRs.
+
+** OBTENIENDO LA LONG DE LOS CONTIGS DEL GENOMA DE REF
+python3 /scratch_local/softwares/calculating_conting_lengths.py genoma_referencia.fna > contigs_length.bed
+
+** CONVIRTIENDO DE GFF a BED (Se requiere activar el entorno AGAT para activar BEDTOOLS)
+gff2bed < anotacion.gff > anotacion.bed
+
+** HALLANDO COORDENAGAD DE IGRs. Es lo complementario a las coordenadas en la anotacion
+bedtools complement -i anotacion.bed -g contigs_length.bed > intergenic.bed
+
+** BED A GTF. Sin embargo, dependiendo de los campos requeridos en el GTF se debe modificar las columnas
+awk '{print $1"\tIntergenic\tIGR\t"$2+1"\t"$3"\t.\t.\t.\tgene_id \""$1"_"$2"_"$3"\";"}' intergenic.bed > intergenic.gtf
+
+** ADICIONANDO EL GTF con IGRs a las anotaciones de los genes
+cat anotaciones.gtf intergenic.gtf > concat_anotaciones.gtf
+
+---------------------------------------------------------------------------------------------------------------------------------------
+
+	#	2.2. Ensamblaje de transcriptoma con Stringtie
+
+Esto es en la carpeta:
+	4.ensamblajes
+Se puede hacer ensamblaje del transcriptoma, asi se pueden reconocer regiones que dan lugar a mas de una proteina, ya sea porque hay
+splicing o por que son regiones policistronicas. Sin embargo, no es esencial para hacer la cuantificacion de los transcritos.
+
+** GENERANDO EL TRANSCRIPTOMA POR CADA ALINEAMIENTO
+/scratch_local/softwares/stringtie-2.2.1.Linux_x86_64/stringtie \
+-G ../2.referencia/anotaciones.gtf \
+-o assembly.gtf \
+-l query_rna-seq1 \
+-p 20 \
+../3.alineamientos/query_rna1.sorted.bam
+
+Como se van a comparar diferentes condiciones se debe hacer la fusion ("merge") de los transcriptomas generados, para no generar IDs 
+redundantes
+
+El "merge_list.txt" debe contener el path a cada uno de los transcriptomas generados anteriormente
+/scratch_local/servicios2023/202309_Mercurio/Datos_mercurio/4.ensamblajes/query_rna-seq1.gtf
+/scratch_local/servicios2023/202309_Mercurio/Datos_mercurio/4.ensamblajes/query_rna-seq2.gtf
+...
+
+** UNIENDO LOS TRANSCRIPTOMAS PARA GENERAR UN UNICO TRANSCRIPTOMA ENSAMBLADO
+/scratch_local/softwares/stringtie-2.2.1.Linux_x86_64/stringtie --merge \
+-G ../2.referencia/anotaciones.gtf \
+-o stringtie_merged.gtf merge_list.txt
+
+** HACIENDO EL ENSAMBLAJE Y CUANTIFICACION POR CADA TRANSCRIPTOMA USANDO EL TRANSCRIPTOMA MERGED
+/scratch_local/softwares/stringtie-2.2.1.Linux_x86_64/stringtie \
+-G stringtie_merged.gtf \
+-o stringtie_quant/query_rna1.gtf \
+-l query_rna1.sorted \
+-p 20 -e \
+../3.alineamientos/query_rna1.sorted
+
+	* Se debe poner el flag "-e" para generar la archivos con los que se pueda hacer cuantificacion y luego el analisis por DEGSeq2.
+
+---------------------------------------------------------------------------------------------------------------------------------------
+
+	# 3. Cuantificacion de transcritos
+
+	** Cuantificando usando Stringtie
+	
+La lista gtf.list debe tener el sufijo del alineamiento y el path del alineamiento:
+	query_rna1 path/to/query_rna1
+	query_rna2 path/to/query_rna2
+	...
+
+# Cuantificando los transcritos
+/scratch_local/softwares/stringtie-2.2.1.Linux_x86_64/prepDE.py3 -i gtf.list
+
+Este comando genera dos salidas:
+	1. gene_count_matrix.csv
+	2. transcript_count_matrix.csv
